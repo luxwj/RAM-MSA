@@ -4,8 +4,9 @@ Recursive Anytime Memory-bounded Multiple Sequence Alignment (RAM-MSA) is a CPU-
 
 ## Prerequisites
 
-OS: linux / mac OS
-c++ boost library
+- OS: linux / macOS
+  + Tested on Ubuntu 22.04.5 LTS and macOS 12.7.6
+- c++ boost library (already prepared in include/boost)
 
 ## Compile RAM-MSA
 
@@ -35,7 +36,7 @@ The following settings are available:
   + `-t PAM250`: PAM250 substitution matrix (using path cost, int type, gap open penalty = 0, gap extension penalty = -30)
   + (Under construction) `-t BLOSUM62`: BLOSUM62 substitution matrix (using path score, double type, gap open penalty = 1.53, gap extension penalty = 0.00)
 - `-m`: Set the memory limit ratio. Default is 0.8, which sets the memory limit to 0.8 * available RAM. Set the ratio to negative to disable the memory-bound strategy.
-  + Memory-bound strategy is disabled on mac OS due to some technical issues.
+  + Memory-bound strategy is disabled on macOS due to some technical issues.
 
 For example, you can compute the exact MSA on `2ack.fasta` without memory-bound strategy using the following command:
 
@@ -48,9 +49,9 @@ For example, you can compute the exact MSA on `2ack.fasta` without memory-bound 
 1. Output file: `anytime_results.txt`
 2. The running time limit is set to 10 million seconds (about 4 months). The search terminates if the timie limit is exceeded.
 3. The memory consumption of open & closed nodes are theoretically computed under linear gap penalty conditions. Which means (1) the acutally memory consumption could be different, and (2) it doesn't apply to affine gap penalty cases.
-4. The available memory
+4. The memory usage is tracked by `/proc/meminfo` and `/proc/self/statm` so only available on linux
 
 ## Trouble shooting
 
 - CMake Error: CMake 3.15 or higher is required.
-  + Solution: In `CMakeLists.txt` line 9, change `VERSION 3.15` to `VERSION 3.14` or lower. Tested with 3.15.
+  + Solution: In `CMakeLists.txt` line 9, change `VERSION 3.14` to `VERSION 3.13` or lower. Tested with 3.15 and 3.14.
