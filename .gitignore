@@ -1,5 +1,6 @@
-# exclude files in build, x64
+# exclude files in build, x64, .vscode
 /build
 /x64
+/.vscode
 
 .DS_Store

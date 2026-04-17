@@ -1,5 +1,7 @@
 # RAM-MSA
 
+[![DOI](https://zenodo.org/badge/1096295403.svg)](https://doi.org/10.5281/zenodo.17607120)
+
 Recursive Anytime Memory-bounded Multiple Sequence Alignment (RAM-MSA) is a CPU-based sequential MSA algorithm.
 
 ## Prerequisites
@@ -27,29 +29,36 @@ For the simplest example, enter the `build` folder. Then,
 ./RAM-MSA
 ```
 
-This will compute the exact MSA on the `1ac5.fasta` sequence set in the `data` folder with the default settings. 
+This will compute the exact MSA on the SABRE `twi_009` sequence set in the `data` folder with the default settings. 
 
 The following settings are available:
 
-- `-f`: Specific an input FASTA file
-- `-t`: Specific the substitution matrix. Default is PAM250.
-  + `-t PAM250`: PAM250 substitution matrix (using path cost, int type, gap open penalty = 0, gap extension penalty = -30)
-  + (Under construction) `-t BLOSUM62`: BLOSUM62 substitution matrix (using path score, double type, gap open penalty = 1.53, gap extension penalty = 0.00)
+- `-f`: Specify an input FASTA file
+- `-rf`: Specify an reference FASTA file. The program will output the sum-of-pairs (SP) accuracy and total column (TC) accuracy if the reference file is valid.
+- `-t`: Specify the substitution matrix. Default is PAM250.
+  + `-t PAM250`: PAM250 substitution matrix (using path cost, int type, gap open penalty = 0, gap extension penalty = 12)
+  + `-t BLOSUM62`: BLOSUM62 substitution matrix (using path score, float type, gap open penalty = 9.5, gap extension penalty = 2.0)
+  + `-t GONNET`: Gonnet160 substitution matrix (using path score, float type, gap open penalty = 22.0, gap extension penalty = 1.0)
 - `-m`: Set the memory limit ratio. Default is 0.8, which sets the memory limit to 0.8 * available RAM. Set the ratio to negative to disable the memory-bound strategy.
   + Memory-bound strategy is disabled on macOS due to some technical issues.
 
-For example, you can compute the exact MSA on `2ack.fasta` without memory-bound strategy using the following command:
+For example, you can compute the exact MSA on `twi_009` without memory-bound strategy using the following command:
 
 ```
-./RAM-MSA -f "../data/2ack.fasta" -m -1
+./RAM-MSA -f "../data/twi_009" -m -1
+```
+
+Or compute the exact MSA on `twi_009` with Gonnet160 substitution matrix and compute the SP accuracy and TC accuracy with its reference alignment:
+
+```
+./RAM-MSA -f "../data/twi_009" -rf "../data/twi_009_ref.fasta" -t GONNET
 ```
 
 ## Other details
 
 1. Output file: `anytime_results.txt`
 2. The running time limit is set to 10 million seconds (about 4 months). The search terminates if the timie limit is exceeded.
-3. The memory consumption of open & closed nodes are theoretically computed under linear gap penalty conditions. Which means (1) the acutally memory consumption could be different, and (2) it doesn't apply to affine gap penalty cases.
-4. The memory usage is tracked by `/proc/meminfo` and `/proc/self/statm` so only available on linux
+3. The memory usage is tracked by `/proc/meminfo` and `/proc/self/statm` so only available on linux. Disabled memory-bounded extension by `#if defined(__APPLE__) && defined(__MACH__)`.
 
 ## Trouble shooting
 

@@ -3,7 +3,6 @@
 
 #include "../parameters.hpp"
 #include "../utils.hpp"
-#include <array>    // codeupdate
 #include <vector>
 #include <boost/multi_index_container.hpp>
 #include <boost/multi_index/member.hpp>
@@ -15,13 +14,17 @@
 // An instance of AstarMultiIndex holds an OpenList
 template <int NN>
 class AstarMultiIndex{
+    // Two types of data structure for OpenList nodes:
+    // 1. Each node includes the direction to its parent and grandparent
+    // 2. Each node includes the gap length of each sequence
 public:
-    template <typename TB_TYPE>
-    struct CoordTBInfo {         // hash map key
-        std::array<int, NN> crd;
 
-        // // When each node includes the gap length, tb[0] = gap_len[0], tb[1] = gap_len[1], ...
-        TB_TYPE tb_info;        // trace back info
+    /* --- Affine --- */
+    struct CoordTBInfo {         // hash map key
+        std::array<CRDTYPE, NN> crd;
+
+        // Each node includes the gap length, tb[0] = gap_len[0], tb[1] = gap_len[1], ...
+        std::array<CRDTYPE, NN> tb_info;        // trace back info
 
         bool operator==(const CoordTBInfo& other) const {
             return crd == other.crd && tb_info == other.tb_info;
@@ -29,34 +32,22 @@ public:
     };
 
     struct CoordTBInfoHash {
-        std::size_t operator()(const CoordTBInfo<AFFINE_TB_TYPE>& k) const {
+        size_t operator()(const CoordTBInfo& k) const {
             // VectorIntHash in utils.hpp
-            std::size_t h1 = VectorIntHash<NN>{}(k.crd);
-            std::size_t h2 = VectorIntHash<NN>{}(k.tb_info);
-            return h1 ^ (h2 << 1);
-        }
-
-        // // only consider the coordinates
-        // std::size_t operator()(const CoordTBInfo<LINEAR_TB_TYPE>& k) const {
-        //     // VectorIntHash in utils.hpp
-        //     std::size_t h1 = VectorIntHash<NN>{}(k.crd);
-        //     return h1;
-        // }
-
-        // consider both the coordinates and the tb_info
-        std::size_t operator()(const CoordTBInfo<LINEAR_TB_TYPE>& k) const {
-            // VectorIntHash in utils.hpp
-            std::size_t h1 = VectorIntHash<NN>{}(k.crd);
-            std::size_t h2 = VectorIntHash<NN>{}(k.tb_info);
-            return h1 ^ (h2 << 1);
+            size_t h1 = VectorIntHash<NN>{}(k.crd);
+            size_t h2 = VectorIntHash<NN>{}(k.tb_info);
+            size_t value = h1 ^ (h2 << 1);
+            return value;
         }
     };
 
-    template <typename TB_TYPE>
-    struct OpenListNode {
-        CoordTBInfo<TB_TYPE> crd_tb_info;
+    struct OpenListNodeAffineGap {
+        CoordTBInfo crd_tb_info;
         STYPE fscore;
         STYPE gscore;
+
+        std::array<CRDTYPE, NN> get_crd() const {return crd_tb_info.crd;}
+        std::array<CRDTYPE, NN> get_tb_info() const {return crd_tb_info.tb_info;}
     };
 
     /**
@@ -66,11 +57,10 @@ public:
      * iter = indexByCoord.find(some_idx);
      * indexByCoord.modify(iter, ChangeGscore(new_gscore));
      */
-    template <typename TB_TYPE>
-    struct ChangeGscore {
-        ChangeGscore(const STYPE& new_gscore):new_gscore(new_gscore){}
+    struct ChangeGscoreAffineGap {
+        ChangeGscoreAffineGap(const STYPE& new_gscore):new_gscore(new_gscore){}
         
-        void operator()(OpenListNode<TB_TYPE>& node) {
+        void operator()(OpenListNodeAffineGap& node) {
             node.fscore += new_gscore - node.gscore;
             node.gscore = new_gscore;
         }
@@ -85,11 +75,10 @@ public:
      * iter = indexByCoord.find(some_idx);
      * indexByCoord.modify(iter, ChangeFscore(new_fscore));
      */
-    template <typename TB_TYPE>
-    struct ChangeFscore {
-        ChangeFscore(const STYPE& new_fscore):new_fscore(new_fscore){}
+    struct ChangeFscoreAffineGap {
+        ChangeFscoreAffineGap(const STYPE& new_fscore):new_fscore(new_fscore){}
         
-        void operator()(OpenListNode<TB_TYPE>& node) {
+        void operator()(OpenListNodeAffineGap& node) {
             node.fscore = new_fscore;
         }
 
@@ -97,104 +86,70 @@ public:
             STYPE new_fscore;
     };
 
+    /**
+     * Usage: 
+     * iter = indexByCoord.find(some_idx);
+     * indexByCoord.modify(iter, ChangeGscoreFscoreTBinfo(new_gscore, new_fscore, new_tbinfo));
+     */
+    struct ChangeGscoreFscoreTBinfoAffineGap {
+        ChangeGscoreFscoreTBinfoAffineGap(const STYPE& new_gscore, const STYPE& new_fscore, const std::array<CRDTYPE, NN>& new_tbinfo):new_gscore(new_gscore), new_fscore(new_fscore), new_tbinfo(new_tbinfo){}
+        
+        void operator()(OpenListNodeAffineGap& node) {
+            node.fscore = new_fscore;
+            node.gscore = new_gscore;
+            node.crd_tb_info.tb_info = new_tbinfo;
+        }
+
+        private:
+            STYPE new_gscore;
+            STYPE new_fscore;
+            std::array<CRDTYPE, NN> new_tbinfo;
+    };
+
     struct IndexByFscore {};
     struct IndexByCoord {}; // coordinates and came from direction
 
     using OpenListMultiIdx_Score_Affine = boost::multi_index_container<
-        OpenListNode<AFFINE_TB_TYPE>,     // the data type stored, AFFINE_TB_TYPE for affine gap penalty
+        OpenListNodeAffineGap,              // the data type stored
         boost::multi_index::indexed_by<     // list of indexes
             boost::multi_index::ordered_non_unique<
                 boost::multi_index::tag<IndexByFscore>,
-                boost::multi_index::composite_key<
-                    OpenListNode<AFFINE_TB_TYPE>,
-                    boost::multi_index::member<OpenListNode<AFFINE_TB_TYPE>, STYPE, &OpenListNode<AFFINE_TB_TYPE>::fscore>,     // primary
-                    boost::multi_index::member<OpenListNode<AFFINE_TB_TYPE>, STYPE, &OpenListNode<AFFINE_TB_TYPE>::gscore>      // secondary as tie breaker
+                boost::multi_index::member<
+                    OpenListNodeAffineGap, 
+                    STYPE, 
+                    &OpenListNodeAffineGap::fscore
                 >,
-                boost::multi_index::composite_key_compare<
-                    std::greater<STYPE>,        // fscore in descending order
-                    std::greater<STYPE>         // gscore in descending order
-                >
+                std::greater<STYPE>        // fscore in descending order
             >,
             boost::multi_index::hashed_non_unique<
                 boost::multi_index::tag<IndexByCoord>,
-                boost::multi_index::member<OpenListNode<AFFINE_TB_TYPE>, CoordTBInfo<AFFINE_TB_TYPE>, &OpenListNode<AFFINE_TB_TYPE>::crd_tb_info>, // what will be the index's key
+                boost::multi_index::member<OpenListNodeAffineGap, CoordTBInfo, &OpenListNodeAffineGap::crd_tb_info>, // what will be the index's key
                 CoordTBInfoHash
             >
         >
     >;
 
-    using OpenListMultiIdx_Score_Linear = boost::multi_index_container<
-        OpenListNode<LINEAR_TB_TYPE>,     // the data type stored, LINEAR_TB_TYPE for linear gap penalty
-        boost::multi_index::indexed_by<     // list of indexes
-            boost::multi_index::ordered_non_unique<
-                boost::multi_index::tag<IndexByFscore>,
-                boost::multi_index::composite_key<
-                    OpenListNode<LINEAR_TB_TYPE>,
-                    boost::multi_index::member<OpenListNode<LINEAR_TB_TYPE>, STYPE, &OpenListNode<LINEAR_TB_TYPE>::fscore>,     // primary
-                    boost::multi_index::member<OpenListNode<LINEAR_TB_TYPE>, STYPE, &OpenListNode<LINEAR_TB_TYPE>::gscore>      // secondary as tie breaker
-                >,
-                boost::multi_index::composite_key_compare<
-                    std::greater<STYPE>,        // fscore in descending order
-                    std::greater<STYPE>         // gscore in descending order
-                >
-            >,
-            boost::multi_index::hashed_non_unique<
-                boost::multi_index::tag<IndexByCoord>,
-                boost::multi_index::member<OpenListNode<LINEAR_TB_TYPE>, CoordTBInfo<LINEAR_TB_TYPE>, &OpenListNode<LINEAR_TB_TYPE>::crd_tb_info>, // what will be the index's key
-                CoordTBInfoHash
-            >
-        >
-    >;
 
     using OpenListByFscore_Score_Affine = typename boost::multi_index::index<OpenListMultiIdx_Score_Affine, IndexByFscore>::type;
     using OpenListByCoord_Score_Affine = typename boost::multi_index::index<OpenListMultiIdx_Score_Affine, IndexByCoord>::type;
 
-    using OpenListByFscore_Score_Linear = typename boost::multi_index::index<OpenListMultiIdx_Score_Linear, IndexByFscore>::type;
-    using OpenListByCoord_Score_Linear = typename boost::multi_index::index<OpenListMultiIdx_Score_Linear, IndexByCoord>::type;
-  
 
-    /* --- cost instead of score, fscore and gscore in ascending order --- */
+    /* --- cost instead of score, fscore in ascending order --- */
     using OpenListMultiIdx_Cost_Affine = boost::multi_index_container<
-        OpenListNode<AFFINE_TB_TYPE>,         // the data type stored, AFFINE_TB_TYPE for affine gap penalty
+        OpenListNodeAffineGap,                  // the data type stored
         boost::multi_index::indexed_by<             // list of indexes
             boost::multi_index::ordered_non_unique<
                 boost::multi_index::tag<IndexByFscore>,
-                boost::multi_index::composite_key<
-                    OpenListNode<AFFINE_TB_TYPE>,
-                    boost::multi_index::member<OpenListNode<AFFINE_TB_TYPE>, STYPE, &OpenListNode<AFFINE_TB_TYPE>::fscore>,     // primary
-                    boost::multi_index::member<OpenListNode<AFFINE_TB_TYPE>, STYPE, &OpenListNode<AFFINE_TB_TYPE>::gscore>      // secondary as tie breaker
+                boost::multi_index::member<
+                    OpenListNodeAffineGap, 
+                    STYPE, 
+                    &OpenListNodeAffineGap::fscore
                 >,
-                boost::multi_index::composite_key_compare<
-                    std::less<STYPE>,        // fscore in ascending order
-                    std::greater<STYPE>         // updated: gscore in descending order
-                >
+                std::less<STYPE>        // fscore in ascending order
             >,
             boost::multi_index::hashed_non_unique<
                 boost::multi_index::tag<IndexByCoord>,
-                boost::multi_index::member<OpenListNode<AFFINE_TB_TYPE>, CoordTBInfo<AFFINE_TB_TYPE>, &OpenListNode<AFFINE_TB_TYPE>::crd_tb_info>, // what will be the index's key
-                CoordTBInfoHash
-            >
-        >
-    >;
-
-    using OpenListMultiIdx_Cost_Linear = boost::multi_index_container<
-        OpenListNode<LINEAR_TB_TYPE>,         // the data type stored, LINEAR_TB_TYPE for linear gap penalty
-        boost::multi_index::indexed_by<             // list of indexes
-            boost::multi_index::ordered_non_unique<
-                boost::multi_index::tag<IndexByFscore>,
-                boost::multi_index::composite_key<
-                    OpenListNode<LINEAR_TB_TYPE>,
-                    boost::multi_index::member<OpenListNode<LINEAR_TB_TYPE>, STYPE, &OpenListNode<LINEAR_TB_TYPE>::fscore>,     // primary
-                    boost::multi_index::member<OpenListNode<LINEAR_TB_TYPE>, STYPE, &OpenListNode<LINEAR_TB_TYPE>::gscore>      // secondary as tie breaker
-                >,
-                boost::multi_index::composite_key_compare<
-                    std::less<STYPE>,        // fscore in ascending order
-                    std::greater<STYPE>         // updated: gscore in descending order
-                >
-            >,
-            boost::multi_index::hashed_non_unique<
-                boost::multi_index::tag<IndexByCoord>,
-                boost::multi_index::member<OpenListNode<LINEAR_TB_TYPE>, CoordTBInfo<LINEAR_TB_TYPE>, &OpenListNode<LINEAR_TB_TYPE>::crd_tb_info>, // what will be the index's key
+                boost::multi_index::member<OpenListNodeAffineGap, CoordTBInfo, &OpenListNodeAffineGap::crd_tb_info>, // what will be the index's key
                 CoordTBInfoHash
             >
         >
@@ -203,11 +158,125 @@ public:
     using OpenListByFscore_Cost_Affine = typename boost::multi_index::index<OpenListMultiIdx_Cost_Affine, IndexByFscore>::type;
     using OpenListByCoord_Cost_Affine = typename boost::multi_index::index<OpenListMultiIdx_Cost_Affine, IndexByCoord>::type;
 
+
+
+
+    /* --- Linear --- */
+    struct OpenListNodeLinearGap {
+        std::array<CRDTYPE, NN> crd;
+        DIRTYPE tb_info;        // trace back info
+        STYPE fscore;
+        STYPE gscore;
+
+        std::array<CRDTYPE, NN> get_crd() const {return crd;}
+        DIRTYPE get_tb_info() const {return tb_info;}
+    };
+
+
+    /**
+     * This one not only changes the gscore but also modifies fscore accordingly.
+     * fscore += new_gscore - node.gscore;
+     * Usage: 
+     * iter = indexByCoord.find(some_idx);
+     * indexByCoord.modify(iter, ChangeGscore(new_gscore));
+     */
+    struct ChangeGscoreLinearGap {
+        ChangeGscoreLinearGap(const STYPE& new_gscore):new_gscore(new_gscore){}
+        
+        void operator()(OpenListNodeLinearGap& node) {
+            node.fscore += new_gscore - node.gscore;
+            node.gscore = new_gscore;
+        }
+
+        private:
+            STYPE new_gscore;
+    };
+
+
+    /**
+     * @brief Update the fscore of a reexpanded parent node when enabling memory bound
+     * Usage: 
+     * iter = indexByCoord.find(some_idx);
+     * indexByCoord.modify(iter, ChangeFscore(new_fscore));
+     */
+    struct ChangeFscoreLinearGap {
+        ChangeFscoreLinearGap(const STYPE& new_fscore):new_fscore(new_fscore){}
+        
+        void operator()(OpenListNodeLinearGap& node) {
+            node.fscore = new_fscore;
+        }
+
+        private:
+            STYPE new_fscore;
+    };
+
+    /**
+     * Usage: 
+     * iter = indexByCoord.find(some_idx);
+     * indexByCoord.modify(iter, ChangeGscore(new_gscore));
+     */
+    struct ChangeGscoreFscoreTBinfoLinearGap {
+        ChangeGscoreFscoreTBinfoLinearGap(const STYPE& new_gscore, const STYPE& new_fscore, const DIRTYPE& new_tbinfo):new_gscore(new_gscore), new_fscore(new_fscore), new_tbinfo(new_tbinfo){}
+        
+        void operator()(OpenListNodeLinearGap& node) {
+            node.fscore = new_fscore;
+            node.gscore = new_gscore;
+            node.tb_info = new_tbinfo;
+        }
+
+        private:
+            STYPE new_gscore;
+            STYPE new_fscore;
+            DIRTYPE new_tbinfo;
+    };
+
+    using OpenListMultiIdx_Score_Linear = boost::multi_index_container<
+        OpenListNodeLinearGap,
+        boost::multi_index::indexed_by<     // list of indexes
+            boost::multi_index::ordered_non_unique<
+                boost::multi_index::tag<IndexByFscore>,
+                boost::multi_index::member<
+                    OpenListNodeLinearGap, 
+                    STYPE, 
+                    &OpenListNodeLinearGap::fscore
+                >,
+                std::greater<STYPE>        // fscore in descending order
+            >,
+            boost::multi_index::hashed_non_unique<
+                boost::multi_index::tag<IndexByCoord>,
+                boost::multi_index::member<OpenListNodeLinearGap, std::array<CRDTYPE, NN>, &OpenListNodeLinearGap::crd> // what will be the index's key
+            >
+        >
+    >;
+
+    using OpenListByFscore_Score_Linear = typename boost::multi_index::index<OpenListMultiIdx_Score_Linear, IndexByFscore>::type;
+    using OpenListByCoord_Score_Linear = typename boost::multi_index::index<OpenListMultiIdx_Score_Linear, IndexByCoord>::type;
+  
+
+    /* --- Tie breaker: None --- */
+    using OpenListMultiIdx_Cost_Linear = boost::multi_index_container<
+        OpenListNodeLinearGap,         // the data type stored, LINEAR_TB_TYPE for linear gap penalty
+        boost::multi_index::indexed_by<             // list of indexes
+            boost::multi_index::ordered_non_unique<
+                boost::multi_index::tag<IndexByFscore>,
+                boost::multi_index::member<
+                    OpenListNodeLinearGap, 
+                    STYPE, 
+                    &OpenListNodeLinearGap::fscore
+                >,
+                std::less<STYPE>        // fscore in ascending order
+            >,
+            boost::multi_index::hashed_non_unique<
+                boost::multi_index::tag<IndexByCoord>,
+                boost::multi_index::member<OpenListNodeLinearGap, std::array<CRDTYPE, NN>, &OpenListNodeLinearGap::crd> // what will be the index's key
+            >
+        >
+    >;
+
+
     using OpenListByFscore_Cost_Linear = typename boost::multi_index::index<OpenListMultiIdx_Cost_Linear, IndexByFscore>::type;
     using OpenListByCoord_Cost_Linear = typename boost::multi_index::index<OpenListMultiIdx_Cost_Linear, IndexByCoord>::type;
 
-
-    /* --- cost instead of score --- */
 
     /*  usage
         AstarMultiIndex::OpenListMultiIdx_{Cost, Score}_{Linear, Affine} open_list_MI;
@@ -231,6 +300,10 @@ public:
             auto iter = indexByCoord.find(some_idx);
             indexByCoord.modify(iter, ChangeGscore(new_gscore));
     */
+
 };
+
+
+
 
 #endif // MULTIINDEXUTILS

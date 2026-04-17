@@ -15,10 +15,12 @@ project(${PROJECT_NAME} LANGUAGES CXX)
 
 add_executable(${PROJECT_NAME} src/main.cpp
 )
-target_compile_features(${PROJECT_NAME} PUBLIC cxx_std_14)
+target_compile_features(${PROJECT_NAME} PUBLIC cxx_std_17)
 
 target_include_directories(${PROJECT_NAME} PRIVATE include)
 
 if (DEBUG)
   set (CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -g")
+else()
+  set (CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -O3")
 endif()

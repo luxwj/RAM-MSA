@@ -27,11 +27,11 @@ private:
     int ll;   // seq_max_len
     int *seq_lens;  // sequence lengths
     // the index offsets of each dimension, init as [1, (ll+1), (ll+1)^2, ...]
-    int *offsets;
+    int *offsets;  
 
     // sequences[][i] corresponds to DP_mat[][i+1] because DP_mat has an edge length of ll+1
-    char const* const*sequences;       
-    ScoreTable blosum_table;
+    char const* const*sequences;    
+    const ScoreTable &blosum_table;
     // the above variables are initialized in instantiation
     double access_cnt;
 
@@ -87,7 +87,7 @@ private:
     int backtrack(char **&msa_result);          // return the alignment length
 public:
     // In addition to the passed variables, init offsets
-    NWSolver(bool _cost_instead_of_score, int sequence_count, int sequence_max_length, char **original_sequences, int *sequence_lengths, ScoreTable _blosum_table):
+    NWSolver(bool _cost_instead_of_score, int sequence_count, int sequence_max_length, char **original_sequences, int *sequence_lengths, const ScoreTable &_blosum_table):
         cost_instead_of_score{_cost_instead_of_score}, nn{sequence_count}, ll{sequence_max_length}, sequences{original_sequences}, blosum_table{_blosum_table} {
         int offset = 1;
         offsets = new int[nn]; seq_lens = new int[nn];
@@ -127,11 +127,7 @@ public:
 
 // init the first cell in DP_mat and TB_mat
 inline void NWSolver::init_mat() {
-    // codeupdate
-    // int zero_vec[nn] = {0};
-    int zero_vec[nn];
-    for (int i = 0; i < nn; ++i) zero_vec[i] = 0;
-
+    int zero_vec[nn] = {0};
     DPCell orig_cell{0, std::vector<int>(nn, 0)};
     set_mat(DP_mat, orig_cell, zero_vec, nn);
     set_mat(TB_mat, 0, zero_vec, nn);               // set TB_mat[0] to all 0, easy to implement backtrack()
@@ -246,9 +242,7 @@ inline void NWSolver::compute_NW() {
         int symbols[dim];
         for(int i = 0; i < dim; ++i)
             symbols[i] = cur_cell[i] == 0 ? GAP : sequences[i][cur_cell[i] - 1];
-
         access_cnt += dim;
-
         DPCell DPCells[dir_cnt];
         STYPE scores[dir_cnt];      // idx 0 is not used; idx 1101 represents the score from (0, 0, ...,-1, -1, 0, -1) cell
         int tbs[dir_cnt];
@@ -270,33 +264,28 @@ inline void NWSolver::compute_NW() {
             scores[dir] = DPCells[dir].score;
             if (dir != dir_cnt - 1)   // no need to check TB_mat if there is no gap
                 tbs[dir] = get_mat(TB_mat, src_cell, dim);
-
             if (dir != dir_cnt - 1) access_cnt += 2;
             else access_cnt += 1;
-
             // update the score, check all pairs of sequences
             for (int i = 0; i < dim - 1; ++i) {
                 for (int j = i + 1; j < dim; ++j) {
                     if (cur_cell[i] != src_cell[i] && cur_cell[j] != src_cell[j]) {     // check the score table
                         scores[dir] += blosum_table.get_score_char(symbols[i], symbols[j]);
-                    } else if (cur_cell[i] == src_cell[i] && cur_cell[j] == src_cell[j]) {
-                        // two gaps so do nothing
                     } else {
                         // use gap_lens in each DPCell to get the gap infos
                         bool gap_in_prev_seq_i = false, gap_in_prev_seq_j = false;
-                        if (DPCells[dir].gap_lens[i] > 0 && DPCells[dir].gap_lens[i] > DPCells[dir].gap_lens[j])
-                            gap_in_prev_seq_i = true;
-                        if (DPCells[dir].gap_lens[j] > 0 && DPCells[dir].gap_lens[j] > DPCells[dir].gap_lens[i])
-                            gap_in_prev_seq_j = true;
+                        int gap_len_seq_i = DPCells[dir].gap_lens[i], gap_len_seq_j = DPCells[dir].gap_lens[j];
+                        if (gap_len_seq_i > gap_len_seq_j) gap_in_prev_seq_i = true;
+                        if (gap_len_seq_j > gap_len_seq_i) gap_in_prev_seq_j = true;
 
-                        if (cur_cell[i] == src_cell[i]) {    // gap in seq i; TB(0, 0) is 0x00 that cannot be detected by bit operation, so add a condition
+                        if (cur_cell[i] == src_cell[i] && cur_cell[j] == src_cell[j]) {
+                            // do nothing
+                        } else if (cur_cell[i] == src_cell[i]) {    // gap in seq i; TB(0, 0) is 0x00 that cannot be detected by bit operation, so add a condition
                             scores[dir] -= (!gap_in_prev_seq_i || src_cell[i] == 0 && src_cell[j] == 0) * open_pen + ext_pen;
                         } else {                                    // gap in seq j
                             scores[dir] -= (!gap_in_prev_seq_j || src_cell[i] == 0 && src_cell[j] == 0) * open_pen + ext_pen;
                         }
                     }
-                    
-                    
                 }
             }
 
@@ -324,6 +313,10 @@ inline void NWSolver::compute_NW() {
                 if (i == dim - 1) break;
                 cur_cell[i] = 0;
                 ++cur_cell[i + 1];
+                if (i + 1 == dim - 1) {
+                    // report the progress
+                    printf("Last seq idx = %d, last seq len = %d\n", cur_cell[i + 1], seq_lens[i + 1]);
+                }
             }
         }
     }
@@ -364,18 +357,16 @@ inline int NWSolver::backtrack(char **&msa_result) {
 
 inline double NWSolver::NW_MSA(char **&msa_result, int &alignment_len) {
     access_cnt = 0;
+    // long long DP_mat_size = pow(ll+1, nn);       // use the seq_max_len ll
     long long DP_mat_size = 1;
     for (int ii = 0; ii < nn; ++ii) {
         DP_mat_size *= (seq_lens[ii] + 1);        // use individual seq_len
+        // printf("len = %d, mat_size = %d\n", seq_lens[ii], (int)DP_mat_size);
     }
     DP_mat = new DPCell[DP_mat_size];
     TB_mat = new int[DP_mat_size];
     init_mat();
-    // codeupdate
-    // int seqs[nn] = {0};
-    int seqs[nn];
-    for (int i = 0; i < nn; ++i) seqs[i] = 0;
-
+    int seqs[nn] = {0};
     for (int i = 1; i < nn; ++i) seqs[i] = i;
     compute_NW();
 

@@ -11,26 +11,44 @@
 #include "Astar/AnytimeAstarLinearGap.hpp"
 #include "Astar/AnytimeAstarTemplateHelper.hpp"
 
+// boost test
+#include "Astar/MultiIndexUtils.hpp"
+#include <chrono>
+#include <boost/multi_index_container.hpp>
+#include <boost/multi_index/member.hpp>
+#include <boost/multi_index/hashed_index.hpp>
+#include <boost/multi_index/ordered_index.hpp>
+
 const char* blosum_scores_dir = "../score_tables/blosum_double";            // double type
+const char* gonnet_scores_dir = "../score_tables/gonnet_double";            // double type
 const char* pam250_scores_dir = "../score_tables/pam250_int";               // int type
 
 std::string input_score_table;
 
-std::string sequences_dir = "../data/1ac5.fasta";              // n = 5
-// std::string sequences_dir = "../data/2ack.fasta";              // n = 5
+std::string sequences_dir = "../data/twi_009";         // n = 4, l = [540, 567]
+
+bool compute_TC_score_and_SP_accuracy = false;      // set to true if parameter "-rf" is assigned with a valid file directory
+std::string reference_dir;
+char **reference_msa_result;
+int ref_seq_cnt, ref_alignment_len;
+
+std::string mafft_res_dir = "../data/mafft_results";            // also in FASTA format
 
 const char* anytime_astar_result_dir = "../anytime_results.txt"; // intermediate results
 
 int seq_cnt = 3, seq_max_len = 0;
 
-double open_penalty = 1.53, ext_penalty = 0.0;      // {1.53, 0.00} in MAFFT
+double open_penalty = 9.50, ext_penalty = 2.00;      // {1.53, 0.00} in MAFFT
 bool cost_instead_of_score = false;                 // set to true when using PAM250
 double memory_limit_ratio = 0.8;      // default memory limit ratio is 0.8, disable memory-bound strategy when this value is < 0 or > 1
 double anytime_time_limit = 10000000;          // time limit in second
 
 char **sequences;
 int *sequence_lengths;      // allocated in load_sequences()
-char **anytime_Astar_msa_result;
+char **anytime_Astar_msa_result, **mafft_msa_result;
+
+// key = time, value = {bin_cnt, beam_width, astar_iter_cnt}
+std::map<double, std::array<int, 3>> anytime_Astar_time_per_parameter;
 
 // initialize the results arrays with seq_max_len
 void init_res_arr() {
@@ -81,7 +99,7 @@ int* load_sequences(std::string file_dir, char **&target, bool set_parameters) {
                 }
                 ++sequence_count;
             }
-            else if (line.length() != 0 && line[0] != ';') {      // check for non-sequence lines, ';' means a comment, TODO: change it to a robuster condition
+            else if (line.length() != 0 && line[0] != ';') {      // check for non-sequence lines, ';' means a comment
                 cur_seq += line;
             }
         }
@@ -108,7 +126,6 @@ int* load_sequences(std::string file_dir, char **&target, bool set_parameters) {
                 if (j < sequence_lines[i].length())
                     target[i][j] = sequence_lines[i][j];
                 else {
-                    // target[i][j] = SPACE;
                     target[i][j] = GAP;
                 }
             }
@@ -127,8 +144,9 @@ int* load_sequences(std::string file_dir, char **&target, bool set_parameters) {
     return ret;
 }
 
+
 // The computed MSA with the highest SP-score is written into the global variable anytime_Astar_msa_result
-void compute_anytime_MSA_Astar(int bin_cnt, int beam_width, int astar_iter_cnt, ScoreTable blosum_table, double time_limit, bool enable_recursive_MSA) {
+void compute_anytime_MSA_Astar(int bin_cnt, int beam_width, int astar_iter_cnt, const ScoreTable &blosum_table, double time_limit, bool enable_recursive_MSA, bool sum_of_crd_as_level) {
     const int seq_cnt_c = seq_cnt;
 
     STYPE heu_score = cost_instead_of_score ? INT_MAX : INT_MIN;
@@ -137,7 +155,7 @@ void compute_anytime_MSA_Astar(int bin_cnt, int beam_width, int astar_iter_cnt, 
     bool reached_time_limit = false;
     Timer anytime_Astar_timer;
     double computation_time;
-    STYPE score = 0;
+    STYPE sp_score = 0, tc_score = 0, sp_accuracy = 0;
 
 
     if (blosum_table.get_open_penalty() == 0) {
@@ -150,7 +168,6 @@ void compute_anytime_MSA_Astar(int bin_cnt, int beam_width, int astar_iter_cnt, 
         }
         computation_time = anytime_Astar_timer.elapsed(true);
         printf("Anytime Astar algorithm (linear gap penalty) completed, alignment length = %d, reached_time_limit = %d\n", alignment_len, (int)reached_time_limit);
-        score = blosum_table.calc_score(anytime_Astar_msa_result, seq_cnt, alignment_len);
     } else {
         printf("\n\nBefore Anytime Astar algorithm (affine gap penalty)\n");
         anytime_Astar_timer.start();
@@ -161,11 +178,20 @@ void compute_anytime_MSA_Astar(int bin_cnt, int beam_width, int astar_iter_cnt, 
         }
         computation_time = anytime_Astar_timer.elapsed(true);
         printf("Anytime Astar algorithm completed (affine gap penalty), alignment length = %d, reached_time_limit = %d\n", alignment_len, (int)reached_time_limit);
-        score = blosum_table.calc_score(anytime_Astar_msa_result, seq_cnt, alignment_len);
     }
+    sp_score = blosum_table.calc_score(anytime_Astar_msa_result, seq_cnt, alignment_len);
 
-    show_result(anytime_Astar_msa_result, score, seq_cnt, alignment_len);
+    show_result(anytime_Astar_msa_result, sp_score, seq_cnt, alignment_len);
+    if (compute_TC_score_and_SP_accuracy) {
+        tc_score = blosum_table.compute_total_column_score(anytime_Astar_msa_result, seq_cnt, alignment_len);
+        sp_accuracy = blosum_table.compute_sum_of_pairs_accuracy(anytime_Astar_msa_result, seq_cnt, alignment_len);
+        printf("TC score = %f, SP accuracy = %f\n\n\n", tc_score, sp_accuracy);
+    }
+    
+    anytime_Astar_time_per_parameter[computation_time] = {bin_cnt, beam_width, astar_iter_cnt};
 }
+
+
 
 // argv[0] = executable, -f: input FASTA file, -t: score table, -m: memory limit (GB)
 std::map<std::string, std::string> parse_params(int argc, char* argv[]) {
@@ -174,10 +200,16 @@ std::map<std::string, std::string> parse_params(int argc, char* argv[]) {
         if (argv[i][0] == '-') {
             if (!strcmp(argv[i], "-f")) {
                 params["file"] = std::string(argv[++i]);
+            } else if (!strcmp(argv[i], "-rf")) {
+                params["reference file"] = std::string(argv[++i]);
             } else if (!strcmp(argv[i], "-t")) {
                 params["table"] = std::string(argv[++i]);
             } else if (!strcmp(argv[i], "-m")) {
                 params["memory"] = std::string(argv[++i]);
+            } else if (!strcmp(argv[i], "-op")) {
+                params["open penalty"] = std::string(argv[++i]);
+            } else if (!strcmp(argv[i], "-ep")) {
+                params["extension penalty"] = std::string(argv[++i]);
             } else if (!strcmp(argv[i], "-bc")) {
                 params["bin count"] = std::string(argv[++i]);
             } else if (!strcmp(argv[i], "-bw")) {
@@ -186,66 +218,110 @@ std::map<std::string, std::string> parse_params(int argc, char* argv[]) {
                 params["non recursive"] = "1";
             }
         } else {
-            printf("Invalid input parameters!\n-f: input FASTA file, -t: score table, -m: memory limit (GB)\n");
+            printf("Invalid input parameters!\n-f: input FASTA file, -rf: reference FASTA file (ground truth), -t: score table, -m: memory limit (GB)\n");
             break;
         }
     }   
-    return params;
-}
 
-// argv[0] = executable, -f: input FASTA file, -t: score table, -m: memory limit (GB)
-int main(int argc, char* argv[]) {
-    int bin_cnt = 4, beam_width = 10, astar_iter_cnt = 100;     // RAM-MSA hyper-parameters
-    bool enable_recursive_MSA = true;                           // RAM-MSA hyper-parameters
+    // process general parameters
 
-    std::map<std::string, std::string> params = parse_params(argc, argv);
-    
     // input FASTA file
     if (params.find("file") != params.end()) {
         sequences_dir = params["file"];
         printf("Read input FASTA file from %s\n", sequences_dir.c_str());
     }
 
+    // input reference alignment FASTA file
+    if (params.find("reference file") != params.end()) {
+        reference_dir = params["reference file"];
+        printf("Read reference FASTA file from %s\n", reference_dir.c_str());
+
+        int *ref_params = load_sequences(reference_dir, reference_msa_result, false);     // false: set_parameters
+        ref_seq_cnt = ref_params[0];
+        ref_alignment_len = ref_params[1];
+        if (ref_seq_cnt == 0)
+            printf("Failed to load reference sequences!\n");
+        else {
+            printf("Load reference sequences successfully!\n");
+            compute_TC_score_and_SP_accuracy = true;
+        }
+    }
+
+    // default memory limit ratio is 0.8
+    if (params.find("memory") != params.end()) {
+    // disable memory-bound on mac OS
+#if defined(__APPLE__) && defined(__MACH__)
+        params["memory"] = "-1";
+#endif
+        double input_memory_limit_ratio = stod(params["memory"]);
+        memory_limit_ratio = input_memory_limit_ratio;
+    }
+    printf("Memory limit = %.2f * Available RAM\n", memory_limit_ratio);
+
+
+    return params;
+}
+
+// argv[0] = executable, -f: input FASTA file, -t: score table, -m: memory limit (GB)
+int main(int argc, char* argv[]) {
+    int bin_cnt = 10, beam_width = 20, astar_iter_cnt = 100;     // RAM-MSA hyper-parameters
+    bool enable_recursive_MSA = true;                           // RAM-MSA hyper-parameters
+    bool sum_of_crd_as_level = false;                           // RAM-MSA hyper-parameters
+
+    std::map<std::string, std::string> params = parse_params(argc, argv);
+    
     // default score table = PAM250
     const char *score_table_dir = pam250_scores_dir;
     open_penalty = 0.00;
-    ext_penalty = -30;
+    ext_penalty = -12;
     cost_instead_of_score = true;
 
     if (params.find("table") != params.end()) {
         std::string input_score_table = params["table"];
         if (input_score_table == "BLOSUM62") {
-            open_penalty = 1.53;
-            ext_penalty = 0.00;
+            open_penalty = 9.50;
+            ext_penalty = 2.00;
             score_table_dir = blosum_scores_dir;
             cost_instead_of_score = false;
         } else if (input_score_table == "PAM250") {
             open_penalty = 0.00;
-            ext_penalty = -30;      // we do score -= ext_penalty, so the PENALTY of a gap is -30
+            ext_penalty = -12;      // we do score -= ext_penalty, so the PENALTY of a gap is -12
             score_table_dir = pam250_scores_dir;
             cost_instead_of_score = true;
+        } else if (input_score_table == "GONNET") {
+            open_penalty = 22.00;
+            ext_penalty = 1.00;
+            score_table_dir = gonnet_scores_dir;
+            cost_instead_of_score = false;
         } else {
-            printf("Unknown input score table! Default is BLOSUM62!\n");
+            printf("Unknown input score table! Default is PAM250!\n");
         }
+    }
+
+    // overwrite the open and extension penalty if they are assigned
+    if (params.find("open penalty") != params.end()) {
+        open_penalty = stod(params["open penalty"]);
+        printf("Set gap open penalty to %g\n", open_penalty);
+    }    
+    
+    if (params.find("extension penalty") != params.end()) {
+        ext_penalty = stod(params["extension penalty"]);
+        printf("Set gap extension penalty to %g\n", ext_penalty);
     }
 
     // score -= open_penalty + gap_len * ext_penalty;
     ScoreTable score_table(open_penalty, ext_penalty, score_table_dir);
     printf("Loaded score table successfully, cost_instead_of_score = %d\n", (int) cost_instead_of_score);
-
-    // default memory limit ratio is 0.8
-
-    // disable memory-bound on mac OS, codeupdate
-#if defined(__APPLE__) && defined(__MACH__)
-    params["memory"] = "-1";
-#endif
-
-    if (params.find("memory") != params.end()) {
-        double input_memory_limit_ratio = stod(params["memory"]);
-        memory_limit_ratio = input_memory_limit_ratio;
+    if (compute_TC_score_and_SP_accuracy) {
+        score_table.set_reference_msa(reference_msa_result, ref_seq_cnt, ref_alignment_len);
     }
 
-    printf("Memory limit = %.2f * Available RAM\n", memory_limit_ratio);
+    if (params.find("sum of crd as level") != params.end()) {
+        sum_of_crd_as_level = true;
+        astar_iter_cnt = 100;
+        beam_width = 20;
+        printf("Sum of coordinates as level in Anytime MSA!\n");
+    }
 
     if (params.find("bin count") != params.end()) {
         int input_bin_cnt = stoi(params["bin count"]);
@@ -272,11 +348,14 @@ int main(int argc, char* argv[]) {
         printf("Recursive MSA disabled!\n");
     }
 
+
     load_sequences(sequences_dir, sequences, true);     // true: set_parameters
     printf("Loaded sequences successfully\n");
     init_res_arr();     // initialize the results arrays with seq_max_len
 
-    compute_anytime_MSA_Astar(bin_cnt, beam_width, astar_iter_cnt, score_table, anytime_time_limit, enable_recursive_MSA);
+    if (seq_cnt > 2) {
+        compute_anytime_MSA_Astar(bin_cnt, beam_width, astar_iter_cnt, score_table, anytime_time_limit, enable_recursive_MSA, sum_of_crd_as_level);
+    }
 
     dealloc();
 }
