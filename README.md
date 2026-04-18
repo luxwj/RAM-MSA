@@ -7,19 +7,25 @@ Recursive Anytime Memory-bounded Multiple Sequence Alignment (RAM-MSA) is a CPU-
 ## Prerequisites
 
 - OS: linux / macOS
-  + Tested on Ubuntu 22.04.5 LTS and macOS 12.7.6
+  + Tested on Ubuntu 22.04.5 LTS, macOS 12.7.6, and Windows 11 x86_64
+- CMake (https://cmake.org/download/)
+- c++ compiler
 - c++ boost library (already prepared in include/boost)
 
 ## Compile RAM-MSA
 
-To compile RAM-MSA, first enter the `RAM-MSA` folder. Then,
+To compile RAM-MSA, first enter the `RAM-MSA` folder. Next,
 
 ```
 mkdir build
 cd build
 cmake ..
-make
 ```
+
+Then
+
+`make` or `ninja`, depending on your environment
+
 
 ## Run RAM-MSA
 

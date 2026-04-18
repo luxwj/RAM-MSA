@@ -13,6 +13,10 @@
 
 #include <chrono>       // timer
 
+#if _WIN64
+#include <windows.h>
+#endif
+
 #include "parameters.hpp"
 
 #define MIN(a,b) ((a)<(b)?(a):(b))
@@ -555,6 +559,7 @@ public:
     }
 };
 
+#if __unix__
 // get available virtual memory
 static size_t get_available_memory() {
     std::ifstream mem_info("/proc/meminfo");
@@ -577,6 +582,23 @@ static size_t get_memory_usage() {
     statm >> size >> resident >> share >> text >> lib >> data >> dt;
     return resident * sysconf(_SC_PAGESIZE);
 }
+#elif _WIN64
+// Get available virtual memory (physical RAM + page file that's currently free)
+static size_t get_available_memory() {
+    MEMORYSTATUSEX memStatus;
+    memStatus.dwLength = sizeof(memStatus);
+    GlobalMemoryStatusEx(&memStatus);
+    return memStatus.ullAvailPhys + memStatus.ullAvailPageFile;
+}
+
+// track the memory consumption on Windows (bytes)
+static size_t get_memory_usage() {
+    MEMORYSTATUSEX memStatus;
+    memStatus.dwLength = sizeof(memStatus);
+    GlobalMemoryStatusEx(&memStatus);
+    return memStatus.ullTotalPhys - memStatus.ullAvailPhys;
+}
+#endif
 
 // remove all empty columns and print the MSA
 static void show_result(char **msa, STYPE score, int seq_cnt, int alignment_len) {
