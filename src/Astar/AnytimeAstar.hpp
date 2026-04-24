@@ -48,6 +48,9 @@ protected:
     // ClosedListGapLen: key = coordinates, value = ClosedListNodeGapLen
     // ClosedListNodeGapLen: key = gap_len, value = {gscore, reexp_fscore}
     using ClosedListNodeGapLen = std::unordered_map<GapLen, std::pair<STYPE, STYPE>, VectorIntHash<NN>>;
+    inline STYPE get_closed_node_gscore(const std::pair<STYPE, STYPE>& p) {return p.first;};
+    inline STYPE get_closed_node_reexp_fscore(const std::pair<STYPE, STYPE>& p) {return p.second;};
+
 
     bool use_linear_gap_penalty;        // if gap open penalty == 0, switch to linear gap penalty mode
     const int nn;   // seq_cnt
@@ -231,7 +234,7 @@ protected:
     void check_memory_bound_trigger();
     GapLen find_parent_in_closed_list(const NodeCoord &last_node_crd, const GapLen &last_node_tb_info, STYPE last_node_gscore);
 
-    bool is_gap(const GapLen &tb_info, int seq_idx) {return tb_info[seq_idx] > 0;};
+    inline bool is_gap(const GapLen &tb_info, int seq_idx) {return tb_info[seq_idx] > 0;};
 
     void print_progress_per_1M_iter();
     void print_computation_time_after_search();
@@ -381,6 +384,7 @@ public:
                 MSA_timer.start();
                 compute_recursive_Astar(recur_idx, reverse_seq);
                 workload_recorder.recursive_MSA_time[recur_idx] = MSA_timer.elapsed(false);
+                if (memory_bound_trigger == true) break;
             }
             tmp_msa_gscore = prev_tmp_msa_gscore;
         }

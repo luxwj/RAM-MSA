@@ -173,8 +173,8 @@ inline bool AnytimeAstarLinearGapSolver<OLMultiIdx, OLFscore, OLCoord, NN>::clos
             /* --- Cannot erase nodes because some suboptimal alignment found before the search terminates may require the nodes --- */
             // Solution: In backtracking, find the node in open list?
 
-            // erase the node in closed list
-            closed_list_linear_gap.erase(closed_list_iter);
+            // // erase the node in closed list
+            // closed_list_linear_gap.erase(closed_list_iter);
         }
     }
     return false;
@@ -339,6 +339,8 @@ inline bool AnytimeAstarLinearGapSolver<OLMultiIdx, OLFscore, OLCoord, NN>::expa
                 !this->cost_instead_of_score && (local_gscore < closed_list_iter->second.gscore)) {
                 return false;
             }
+
+            // Reset the reexp_fscore in "write_into_closed_list" if-block. Otherwise some neighbors of it will be pruned unexpectedly
         }
     }
 
@@ -449,12 +451,14 @@ inline bool AnytimeAstarLinearGapSolver<OLMultiIdx, OLFscore, OLCoord, NN>::expa
         !this->cost_instead_of_score && (this->tmp_msa_gscore < global_best_result)) is_opt_ret = false;
 
     // memory bound
-    // check once per 100 iterations
-    if (this->workload_recorder.iter_cnt % 100 == 0 && is_opt_ret == false && this->enable_memory_bound == true) {
+    // check once per 10000 iterations
+    if (this->workload_recorder.iter_cnt % 10000 == 0 && is_opt_ret == false && this->enable_memory_bound == true) {
 
         this->check_memory_bound_trigger();
 
-        while (this->memory_bound_trigger && this->check_memory_thres(false, closed_list_linear_gap.size())) {
+        if (this->memory_bound_trigger == true && dim < NN) return true;
+
+        while (this->memory_bound_trigger && this->check_memory_thres(false, closed_list_linear_gap.size()) && this->workload_recorder.cur_open_list_cnt > 1) {
             /*
                 1. Remove the worst node from the lowest non-empty bin. Update its parent's reexp-fscore in Closed List & fscore in Open List
                     1-1. Specifically, if the fscore of the current node is better than the parent's reexp-fscore/fscore, update the score
@@ -706,6 +710,7 @@ inline void AnytimeAstarLinearGapSolver<OLMultiIdx, OLFscore, OLCoord, NN>::Anyt
             MSA_timer.start();
             compute_recursive_Astar_linear_gap(recur_idx, reverse_seq);
             this->workload_recorder.recursive_MSA_time[recur_idx] = MSA_timer.elapsed(false);
+            if (this->memory_bound_trigger == true) break;
         }
         this->tmp_msa_gscore = prev_tmp_msa_gscore;
     }

@@ -22,8 +22,8 @@ void AnytimeAstarSolver<OLMultiIdx, OLFscore, OLCoord, NN>::get_match_mismatch_s
     NodeCoord all_dir_nbr_crd (cur_crd); // "+= 1" on each dim
     for (int idx = 0; idx < dim; ++idx) all_dir_nbr_crd[idx] += 1;
 
-    int symbols[dim];        // symbols of all_dir_nbr_crd
-    for (int i = 0; i < dim; ++i) symbols[i] = -1;
+    // symbols of all_dir_nbr_crd
+    std::vector<int> symbols(dim, -1);
 
     for (int seq_idx = 0; seq_idx < dim; ++seq_idx) {
         if (all_dir_nbr_crd[seq_idx] > seq_lens[seq_idx])
@@ -64,7 +64,7 @@ bool AnytimeAstarSolver<OLMultiIdx, OLFscore, OLCoord, NN>::closed_list_duplicat
                 // memory bound
                 // if reexp-fscore is not the initial value, use its reexp-fscore instead if it's found in the Closed List
                 if (inner_iter->second.second != init_reexp_fscore) {
-                    cur_fscore = inner_iter->second.second;
+                    cur_fscore = get_closed_node_reexp_fscore(inner_iter->second);
                     use_reexp_fscore_instead = true;
                 } else {
                     // not a reexp node
@@ -283,7 +283,9 @@ void AnytimeAstarSolver<OLMultiIdx, OLFscore, OLCoord, NN>::compute_anytime_Asta
         if (get_closed_list_size() >= max_closed_size) {
             bool access_reversed_mats = true;
             printf("The closed list consumed all available memory!\n");
-            int prunable_cnt = prune_closed_list(access_reversed_mats, dim);
+            
+            int prunable_cnt = 0;
+            // int prunable_cnt = prune_closed_list(access_reversed_mats, dim);
             if (prunable_cnt == 0) break;
         }
     }
@@ -382,7 +384,7 @@ bool AnytimeAstarSolver<OLMultiIdx, OLFscore, OLCoord, NN>::expand_node(int dim,
                     file_writer->write_SP_accuracy(sp_accuracy);
                 }
 
-                prune_closed_list(access_reversed_mats, dim);
+                // prune_closed_list(access_reversed_mats, dim);
             }
         }
 
@@ -486,7 +488,10 @@ bool AnytimeAstarSolver<OLMultiIdx, OLFscore, OLCoord, NN>::expand_node(int dim,
 
         check_memory_bound_trigger();
 
-        while (memory_bound_trigger && check_memory_thres(false, get_closed_list_size())) {
+        if (memory_bound_trigger == true && dim < NN) return true;
+
+        // workload_recorder.cur_open_list_cnt > 1
+        while (memory_bound_trigger && check_memory_thres(false, get_closed_list_size()) && workload_recorder.cur_open_list_cnt > 1) {
             /*
                 1. Remove the worst node from the lowest non-empty bin. Update its parent's reexp-fscore in Closed List & fscore in Open List
                     1-1. Specifically, if the fscore of the current node is better than the parent's reexp-fscore/fscore, update the score
@@ -516,7 +521,7 @@ bool AnytimeAstarSolver<OLMultiIdx, OLFscore, OLCoord, NN>::expand_node(int dim,
 
             NodeCoord last_node_crd = last_node_iter->get_crd();
 
-            if (last_node_crd == src_crd) {
+            while (last_node_crd == src_crd) {
                 // if source is the only node, go to the next bin
                 if ((*target_index_by_fscore)[non_empty_bin_idx]->size() == 1) {
                     non_empty_bin_idx += 1;
@@ -527,9 +532,15 @@ bool AnytimeAstarSolver<OLMultiIdx, OLFscore, OLCoord, NN>::expand_node(int dim,
                         return is_opt_ret;
                     }
                     last_node_iter = prev((*target_index_by_fscore)[non_empty_bin_idx]->end());
-                }
+                } else
+                    last_node_iter = prev(last_node_iter);
 
                 last_node_crd = last_node_iter->get_crd();
+            }
+
+             // there should not be two source nodes
+            if (last_node_crd == src_crd) {
+                printf("Found a second source node in memory bound extension!\n");
             }
 
             // Calculate the parent's crd and erase the last_node
@@ -544,7 +555,7 @@ bool AnytimeAstarSolver<OLMultiIdx, OLFscore, OLCoord, NN>::expand_node(int dim,
             // Condition 2: parent.gscore + delta_gscore >= cur.gscore
             GapLen parent_gap_len = find_parent_in_closed_list(last_node_crd, last_node_tb_info, last_node_iter->gscore);
             if (parent_gap_len[0] == -1) {
-                printf("No qualified parent in Astar memory bound extension!\n");
+                // printf("No qualified parent in Astar memory bound extension!\n");
                 break;
             }
 
@@ -996,9 +1007,24 @@ template <typename OLMultiIdx, typename OLFscore, typename OLCoord, int NN>
 typename AnytimeAstarSolver<OLMultiIdx, OLFscore, OLCoord, NN>::GapLen AnytimeAstarSolver<OLMultiIdx, OLFscore, OLCoord, NN>::find_parent_in_closed_list(const NodeCoord &last_node_crd, const GapLen &last_node_tb_info, STYPE last_node_gscore) {
     STYPE max_gscore = cost_instead_of_score ? INT_MAX : INT_MIN;
     GapLen max_gap_len;
+    max_gap_len[0] = -1;        // sentinel value
     NodeCoord parent_crd = last_node_crd;
     for (int i = 0; i < NN; ++i)
-        if (is_gap(last_node_tb_info, i) == false) parent_crd[i] -= 1;
+        if (is_gap(last_node_tb_info, i) == false && parent_crd[i] != 0) parent_crd[i] -= 1;
+
+    bool is_source = true;
+    for (int i = 0; i < NN; ++i) {
+        if (parent_crd[i] != 0) {
+            is_source = false;
+            break;
+        } 
+    }
+
+    if (is_source) {
+        for (int i = 0; i < NN; ++i)
+            max_gap_len[i] = 0;
+        return max_gap_len;
+    } 
 
     STYPE ext_pen = blosum_table.get_ext_penalty(), open_pen = blosum_table.get_open_penalty();
 
@@ -1012,8 +1038,7 @@ typename AnytimeAstarSolver<OLMultiIdx, OLFscore, OLCoord, NN>::GapLen AnytimeAs
             // if (gap_len[i] == 0), parent's gap_len[i] can be arbitrary number (no constraint)
             bool is_gap_len_matched = true;
             for (int seq_idx = 0; seq_idx < NN; ++seq_idx) {
-                if (last_node_tb_info[seq_idx] == 0)
-                    continue;
+                if (is_gap(last_node_tb_info, seq_idx) == false) continue;
                 else if (last_node_tb_info[seq_idx] - 1 != inner_iter->first[seq_idx]) {
                     is_gap_len_matched = false;
                     break;
@@ -1021,34 +1046,9 @@ typename AnytimeAstarSolver<OLMultiIdx, OLFscore, OLCoord, NN>::GapLen AnytimeAs
             }
 
             if (is_gap_len_matched == true) {
-                STYPE parent_gscore = inner_iter->second.first;
-                STYPE updated_parent_gscore = parent_gscore;
-                // check all pairs of sequences
-                for (int seq_i = 0; seq_i < NN - 1; ++seq_i) {
-                    for (int seq_j = seq_i + 1; seq_j < NN; ++seq_j) {
-                        // compute and update the score of match/mismatch/gap
-                        if (is_gap(last_node_tb_info, seq_i) == false && is_gap(last_node_tb_info, seq_j) == false) {     // check the score table
-                            int symbol_i = sequences[seq_i][last_node_crd[seq_i] - 1], symbol_j = sequences[seq_j][last_node_crd[seq_j] - 1];
-                            updated_parent_gscore += blosum_table.get_score_char(symbol_i, symbol_j);
-                        } else {        // gap(s) in the two sequences
-                            // There could be gaps in both sequences, so we need to check the gap length
-                            bool gap_in_prev_seq_i = false, gap_in_prev_seq_j = false;
-                            
-                            int gap_len_seq_i = last_node_tb_info[seq_i], gap_len_seq_j = last_node_tb_info[seq_j];
-                            if (gap_len_seq_i > gap_len_seq_j) gap_in_prev_seq_i = true;
-                            if (gap_len_seq_j > gap_len_seq_i) gap_in_prev_seq_j = true;
-                            
-                            if (is_gap(last_node_tb_info, seq_i) && is_gap(last_node_tb_info, seq_j)) {     // two gaps here
-                                // do nothing
-                            } else if (is_gap(last_node_tb_info, seq_i)) {    // gap in seq i
-                                updated_parent_gscore -= (!gap_in_prev_seq_i || last_node_crd[seq_i] == 0 && last_node_crd[seq_j] == 0) * open_pen + ext_pen;
-                            } else {                                    // gap in seq j
-                                updated_parent_gscore -= (!gap_in_prev_seq_j || last_node_crd[seq_i] == 0 && last_node_crd[seq_j] == 0) * open_pen + ext_pen;
-                            }
-                        }
-                    }
-                }
-
+                STYPE parent_gscore = get_closed_node_gscore(inner_iter->second);
+                STYPE updated_parent_gscore = get_closed_node_gscore(inner_iter->second);
+                
                 if (cost_instead_of_score && (updated_parent_gscore > last_node_gscore) || 
                     !cost_instead_of_score && (updated_parent_gscore < last_node_gscore)) {
                         continue;       // condition 2 not fulfilled, skip this direction
@@ -1062,7 +1062,7 @@ typename AnytimeAstarSolver<OLMultiIdx, OLFscore, OLCoord, NN>::GapLen AnytimeAs
             } 
         }
     } else {
-        max_gap_len[0] = -1;
+        printf("Failed to find the parent node!\n");
     }
     return max_gap_len;
 }
