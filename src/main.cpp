@@ -262,6 +262,35 @@ std::map<std::string, std::string> parse_params(int argc, char* argv[]) {
     return params;
 }
 
+bool check_score_table_file(const char* file_dir) {
+    // Open and read first line
+    std::ifstream file(file_dir);
+    if (!file.is_open()) {
+        printf("Failed to open the score table file!\n");
+        return false;
+    }
+    
+    std::string firstLine;
+    if (!std::getline(file, firstLine)) {
+        printf("Failed to read the score table file!\n");
+        return false;
+    }
+    
+    // The 20 amino acids
+    const std::string amino_acids = "ACDEFGHIKLMNPQRSTVWY";
+    std::unordered_set<char> required(amino_acids.begin(), amino_acids.end());
+    
+    // Check if all amino acids appear somewhere in the line
+    for (char symbol : amino_acids) {
+        if (firstLine.find(symbol) == std::string::npos) {
+            printf("Didn't define the scores of the twenty amino acids in the score table file!\n");
+            return false;  // Missing an amino acid
+        }
+    }
+    
+    return true;
+}
+
 // argv[0] = executable, -f: input FASTA file, -t: score table, -m: memory limit (GB)
 int main(int argc, char* argv[]) {
     int bin_cnt = 10, beam_width = 20, astar_iter_cnt = 100;     // RAM-MSA hyper-parameters
@@ -294,7 +323,15 @@ int main(int argc, char* argv[]) {
             score_table_dir = gonnet_scores_dir;
             cost_instead_of_score = false;
         } else {
-            printf("Unknown input score table! Default is PAM250!\n");
+            // input_score_table should be a directory to a custom score table
+            // cost_instead_of_score is set to false
+            score_table_dir = input_score_table.c_str();
+            if (check_score_table_file(score_table_dir) == true) {
+                cost_instead_of_score = false;
+                printf("Successfully loaded the score table from %s!\n", score_table_dir);
+            } else {
+                printf("Failed to read the input score table! Default is PAM250!\n");
+            }
         }
     }
 

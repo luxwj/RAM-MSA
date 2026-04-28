@@ -41,10 +41,13 @@ The following settings are available:
 
 - `-f`: Specify an input FASTA file
 - `-rf`: Specify an reference FASTA file. The program will output the sum-of-pairs (SP) accuracy and total column (TC) accuracy if the reference file is valid.
-- `-t`: Specify the substitution matrix. Default is PAM250.
+- `-op`: Specify the gap open penalty.
+- `-ep`: specify the gap extension penalty.
+- `-t`: Specify the substitution matrix or input your own substitution matrix. Default is PAM250.
   + `-t PAM250`: PAM250 substitution matrix (using path cost, int type, gap open penalty = 0, gap extension penalty = 12)
   + `-t BLOSUM62`: BLOSUM62 substitution matrix (using path score, float type, gap open penalty = 9.5, gap extension penalty = 2.0)
   + `-t GONNET`: Gonnet160 substitution matrix (using path score, float type, gap open penalty = 22.0, gap extension penalty = 1.0)
+  + `-t Path/to/your/matrix/file`: The file must define a 20x20 substitution matrix (using path score). Please check the format in the provided score tables. Don't forget to set the gap penalties.
 - `-m`: Set the memory limit ratio. Default is 0.8, which sets the memory limit to 0.8 * available RAM. Set the ratio to negative to disable the memory-bound strategy.
   + Memory-bound strategy is disabled on macOS due to some technical issues.
 
@@ -52,6 +55,12 @@ For example, you can compute the exact MSA on `twi_009` without memory-bound str
 
 ```
 ./RAM-MSA -f "../data/twi_009" -m -1
+```
+
+Or compute the exact MSA on `twi_009` with your own substitution matrix using the following command:
+
+```
+./RAM-MSA -f "../data/twi_009" -t "../score_tables/blosum_double" -op 9.5 -ep 2.0
 ```
 
 Or compute the exact MSA on `twi_009` with Gonnet160 substitution matrix and compute the SP accuracy and TC accuracy with its reference alignment:
